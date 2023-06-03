@@ -29,7 +29,7 @@ This repository contains the code for Automatic Summarization using Pointer-Gene
     - Average ROUGE-L score is 0.34
 
 - Seq2Seq with Attention, Pointer-Generator Network & Coverage Mechanism :
-    - Repetition has been decreased further
+    - Repetition has been decreased further due to the coverage vector
     - The words generated have a relation between them
     - The output is more coherent and makes more sense
     - Average ROUGE-L score is 0.36
