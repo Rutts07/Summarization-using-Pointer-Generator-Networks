@@ -9,7 +9,7 @@ This repository contains the code for Automatic Summarization using Pointer-Gene
 - GPU used: ```NVIDIA GeForce RTX 2070 Super with Max-Q Design```
 
 ### About :
-- The dataset used is the <a href="https://www.tensorflow.org/datasets/catalog/cnn_dailymail">CNN/DailyMail</a> dataset.
+- The dataset used is the <a href="https://huggingface.co/datasets/cnn_dailymail">CNN/DailyMail</a> dataset.
 - A total of 3 model architectures have been implemented:
     - A vanilla Sequence-to-Sequence model with Attention (Baseline)
     - A Sequence-to-Sequence model with Attention and Copy Mechanism (Pointer-Generator Network)
@@ -21,15 +21,18 @@ This repository contains the code for Automatic Summarization using Pointer-Gene
 - Seq2Seq with Attention Baseline :
     - Repetition of the same word is evident from the output
     - The output is doesn’t make any sense both syntactically and semantically
+    - Average ROUGE-L score is 0.12
 
 - Seq2Seq with Attention & Pointer-Generator Network :
     - Repetition has been decreased although few words / phrases do repeat
     - The words generated still don’t have any relation between them
+    - Average ROUGE-L score is 0.34
 
 - Seq2Seq with Attention, Pointer-Generator Network & Coverage Mechanism :
     - Repetition has been decreased further
     - The words generated have a relation between them
     - The output is more coherent and makes more sense
+    - Average ROUGE-L score is 0.36
 
 ### Guidlines to run the code :
 - Clone the repository using ```git clone <link_to_the_repo>```

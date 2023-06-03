@@ -1,4 +1,4 @@
-# Import the datasets & necessary packages
+# Import the datasets and the necessary packages
 from datasets import load_dataset
 
 import torch
@@ -38,6 +38,7 @@ contraction_mapping = {"ain't": "is not", "aren't": "are not","can't": "cannot",
     "you'd": "you would", "you'd've": "you would have", "you'll": "you will", "you'll've": "you will have",
     "you're": "you are", "you've": "you have"}
 
+# Define helper functions
 def unicodeToAscii(s):
     return ''.join(c for c in unicodedata.normalize('NFD', s) if unicodedata.category(c) != 'Mn')
     
@@ -219,14 +220,14 @@ class Vocab(object):
         # print("Vocabulary trimmed to %d words ..." % self.num_words)
         # return self.words
 
-# Define the helper functions
+# Define utility functions
 def trimRareWords(vocab, MIN_COUNT=0):
     init_num_words = vocab.vocab_size()
     vocab.trim_vocab(MIN_COUNT)  
     final_num_words = vocab.vocab_size()
     print('Trimmed from {} words to {} words, removing {} words'.format(init_num_words, final_num_words, init_num_words - final_num_words))
 
-# Perform length analysis on the dataset
+### Perform length analysis on the dataset
 def data_analysis(pairs):
       print("Number of article-summary pairs : %d" % len(pairs))
       
@@ -290,8 +291,6 @@ def batch2TrainData(voc, pair_batch):
     out_ids, mask, max_out_len = batch_summary(sum_ids)
     return inp_ids, inp_len, oovs, out_ids, mask, max_out_len, max_oov_len
 
-# Define the model architecture
-
 # Define the Encoder
 class EncoderRNN(nn.Module):
     def __init__(self, hidden_size, n_layers=1, dropout=0):
@@ -308,7 +307,7 @@ class EncoderRNN(nn.Module):
         torch.cuda.empty_cache()
         
         hidden = self._init_hidden(input_seq.size(0)) if hidden is None else hidden
-        embedded = embedding(input_seq).cuda()                                          # B X L X H
+        embedded = embedding(input_seq).cuda()                                      # B X L X H
         packed = nn.utils.rnn.pack_padded_sequence(embedded, input_lengths, batch_first=True, enforce_sorted=False)
         outputs, hidden = self.gru(packed, hidden)                                      # Output = B X L X 2H
         outputs, _ = nn.utils.rnn.pad_packed_sequence(outputs, batch_first=True)
@@ -326,26 +325,21 @@ class Attn(nn.Module):
         self.V_prime = nn.Linear(hidden_size, 1, bias=False)
         self.enc_v = nn.Linear(hidden_size, hidden_size, bias=False)
         self.dec_v = nn.Linear(hidden_size, hidden_size, bias=True)
-        self.cov_v = nn.Linear(1, hidden_size, bias=False)
         
     # using multi-layer perceptron attention
-    def mlp_score(self, decoder_hidden, encoder_output, coverage):
-        coverage = coverage.unsqueeze(-1)                           # B x L x 1
-        enc_feature = self.enc_v(encoder_output).cuda()             # B X L X H
-        dec_feature = self.dec_v(decoder_hidden).cuda()             # B X 1 X H
-        cov_feature = self.cov_v(coverage)                          # B x L x H
+    def mlp_score(self, decoder_hidden, encoder_output):
+        enc_feature = self.enc_v(encoder_output).cuda()                        # B X L X H
+        dec_feature = self.dec_v(decoder_hidden).cuda()                        # B X 1 X H
         
-        scores = enc_feature + dec_feature                          # B X L X H
-        scores = scores + cov_feature
-        
+        scores = enc_feature + dec_feature                              # B X L X H
         scores = torch.tanh(scores).cuda()                          # B X L X H
-        scores = self.V_prime(scores)                               # B X L X 1        
-        scores = scores.squeeze(-1)                                 # B X L
+        scores = self.V_prime(scores)                                   # B X L X 1
+        scores = scores.squeeze(-1)                                     # B X L
         
         return scores
 
-    def forward(self, decoder_hidden, encoder_outputs, coverage, enc_pad_mask=None):
-        attn_scores = self.mlp_score(decoder_hidden, encoder_outputs, coverage)
+    def forward(self, decoder_hidden, encoder_outputs, enc_pad_mask=None):
+        attn_scores = self.mlp_score(decoder_hidden, encoder_outputs)
         
         # Don't attend over padding
         # if enc_pad_mask is not None:
@@ -355,6 +349,7 @@ class Attn(nn.Module):
         
         return attn_dist
 
+# Define the model architectures
 # Define the decoder
 class AttnDecoderRNN(nn.Module):
     def __init__(self, hidden_size, output_size, n_layers=1, dropout=0):
@@ -371,24 +366,24 @@ class AttnDecoderRNN(nn.Module):
         self.concat = nn.Linear(hidden_size * 2, hidden_size)
         self.out = nn.Linear(hidden_size, output_size)
         
-    def forward(self, input_step, last_hidden, encoder_outputs, embedding, coverage, enc_pad_mask=None):
-        embedded = embedding(input_step)                            # B X H
+    def forward(self, input_step, last_hidden, encoder_outputs, embedding, enc_pad_mask=None):
+        embedded = embedding(input_step)                                # B X H
         embedded = self.embedding_dropout(embedded).cuda()          # B X H
         
         rnn_output, hidden = self.gru(embedded, last_hidden)            # B X 1 X H, B X 1 X H
-        rnn_output = rnn_output.cuda()                                  # B X H
-        attn_dist = self.attn(rnn_output, encoder_outputs, coverage, enc_pad_mask)  # B X 1 X L
+        rnn_output = rnn_output.cuda()                       # B X H
+        attn_dist = self.attn(rnn_output, encoder_outputs, enc_pad_mask)# B X 1 X L
         attn_dist = attn_dist.cuda()
         
-        context = torch.bmm(attn_dist, encoder_outputs).cuda()      # B X 1 X H
+        context = torch.bmm(attn_dist, encoder_outputs).cuda()                 # B X 1 X H
         
-        rnn_output = rnn_output.squeeze(1)                          # B X H
-        context = context.squeeze(1)                                # B X H
+        rnn_output = rnn_output.squeeze(1)                             # B X H
+        context = context.squeeze(1)                                   # B X H
         
-        concat_input = torch.cat((rnn_output, context), 1).cuda()       # B X 2H
-        concat_output = torch.tanh(self.concat(concat_input)).cuda()    # B X H
+        concat_input = torch.cat((rnn_output, context), 1).cuda()      # B X 2H
+        concat_output = torch.tanh(self.concat(concat_input)).cuda()   # B X H
         
-        output = self.out(concat_output).cuda()                         # B X V
+        output = self.out(concat_output).cuda()                                # B X V
         output = F.softmax(output, dim=-1)                              # B X V
         
         return output, attn_dist.squeeze(1), context, hidden
@@ -419,26 +414,19 @@ class PtrGen(nn.Module):
         encoder_outputs = encoder_outputs.cuda()
         encoder_hidden = encoder_hidden.cuda()
         
-        final_dists = []                                # Final dist for NLL loss
-        attn_dists = []
-        coverages = []
-        
-        coverage = torch.zeros_like(input_seq).float().cuda()       # B x L
-        
+        final_dists = []                                                                # Final dist for NLL loss
+        # attn_dists = []
         for t in range(max_target_len):
-            decoder_input = target_seq[:, t].unsqueeze(1)           # B X 1
+            decoder_input = target_seq[:, t].unsqueeze(1)                               # B X 1
             decoder_input.cuda()
             
-            decoder_outputs = self.decoder(decoder_input, encoder_hidden, encoder_outputs, embedding, coverage, enc_pad_mask)
+            decoder_outputs = self.decoder(decoder_input, encoder_hidden, encoder_outputs, embedding, enc_pad_mask)
             decoder_output, attn_dist, context, decoder_hidden = decoder_outputs
             
             # change device
             decoder_output = decoder_output.cuda()
             attn_dist = attn_dist.cuda()
             context = context.cuda()
-            
-            # Sum up the coverage vector
-            coverage = coverage + attn_dist
             
             decoder_hidden = decoder_hidden.squeeze(0)                                  # B X H
             decoder_hidden = decoder_hidden.cuda()
@@ -458,14 +446,12 @@ class PtrGen(nn.Module):
             final_dist = extended_vocab_dist.scatter_add(1, input_seq, wattn_dist)      # B X V'   
             
             final_dists.append(final_dist)
-            attn_dists.append(attn_dist)
-            coverages.append(coverage)
+            # attn_dists.append(attn_dist)
             
-        final_dists = torch.stack(final_dists, dim=-1).cuda()           # B X V' X T
-        attn_dists = torch.stack(attn_dists, dim=-1).cuda()             # B X L X T
-        coverages = torch.stack(coverages, dim=-1).cuda()               # B X L X T
+        final_dists = torch.stack(final_dists, dim=-1).cuda()                                  # B X V' X T
+        # attn_dists = torch.stack(attn_dists, dim=-1)                                  # B X L X T
         
-        return final_dists, attn_dists, coverages
+        return final_dists
     
     def generate_teacher_forcing(self, input_seq, input_lengths, target_seq, max_target_len, max_oov_len, vocab, enc_pad_mask=None):
         # Vocabulary changes for each batch due to copy mechanism
@@ -478,22 +464,17 @@ class PtrGen(nn.Module):
         
         final_dists = []                                                                # Final dist for NLL loss
         # attn_dists = []
-        coverage = torch.zeros_like(input_seq).float().cuda()       # B x L
-        
         for t in range(max_target_len):
             decoder_input = target_seq[:, t].unsqueeze(1)                               # B X 1
             decoder_input.cuda()
             
-            decoder_outputs = self.decoder(decoder_input, encoder_hidden, encoder_outputs, embedding, coverage, enc_pad_mask)
+            decoder_outputs = self.decoder(decoder_input, encoder_hidden, encoder_outputs, embedding, enc_pad_mask)
             decoder_output, attn_dist, context, decoder_hidden = decoder_outputs
             
             # change device
             decoder_output = decoder_output.cuda()
             attn_dist = attn_dist.cuda()
             context = context.cuda()
-            
-            # Sum up the coverage vector
-            coverage = coverage + attn_dist
             
             decoder_hidden = decoder_hidden.squeeze(0)                                  # B X H
             decoder_hidden = decoder_hidden.cuda()
@@ -512,7 +493,7 @@ class PtrGen(nn.Module):
             extended_vocab_dist = torch.cat([vocab_dist, extra_zeros], 1).cuda()    # B X V'
             final_dist = extended_vocab_dist.scatter_add(1, input_seq, wattn_dist)      # B X V'   
             
-            final_dists.append(decoder_output)
+            final_dists.append(final_dist)
             # attn_dists.append(attn_dist)
             
         final_dists = torch.stack(final_dists, dim=-1).cuda()                                  # B X V' X T
@@ -534,19 +515,14 @@ class PtrGen(nn.Module):
         decoder_input = decoder_input * SOS_token                       # SOS token initial input
         
         final_dists = []                                                # Final dist for NLL loss
-        coverage = torch.zeros_like(input_seq).float().cuda()           # B x L
-        
         for _ in range(max_target_len):            
-            decoder_outputs = self.decoder(decoder_input, encoder_hidden, encoder_outputs, embedding, coverage)
+            decoder_outputs = self.decoder(decoder_input, encoder_hidden, encoder_outputs, embedding)
             decoder_output, attn_dist, context, decoder_hidden = decoder_outputs
             
             # change device
             decoder_output = decoder_output.cuda()
             attn_dist = attn_dist.cuda()
             context = context.cuda()
-            
-            # Sum up the coverage vector
-            coverage = coverage + attn_dist
             
             decoder_hidden = decoder_hidden.squeeze(0)                              # B X H
             decoder_hidden = decoder_hidden.cuda()
@@ -557,8 +533,8 @@ class PtrGen(nn.Module):
             
             p_gen = torch.sigmoid(context_feat + decoder_feat + input_feat).cuda()  # B X 1
             vocab_dist = decoder_output
-            vocab_dist = p_gen * decoder_output                                     # B X V
-            wattn_dist = (1 - p_gen) * attn_dist                                    # B X L
+            vocab_dist = p_gen * decoder_output                                   # B X V
+            wattn_dist = (1 - p_gen) * attn_dist                                  # B X L
             
             extra_zeros = torch.zeros(batch_size, max_oov_len).cuda()
             
@@ -567,7 +543,7 @@ class PtrGen(nn.Module):
             decoder_input = torch.argmax(final_dist, dim=1).unsqueeze(0)
             decoder_input = torch.argmax(vocab_dist, dim=1).unsqueeze(0) 
             
-            final_dists.append(decoder_output)
+            final_dists.append(final_dist)
             
         final_dists = torch.stack(final_dists, dim=-1).cuda()                       # B X V' X T
         return final_dists                       
@@ -577,11 +553,6 @@ def maskNLLLoss(output, target):
     cel = nn.CrossEntropyLoss()
     loss = cel(output, target)
     return loss
-
-def coverage_loss(attn_dist, coverage, target_length):
-    loss = torch.sum(torch.min(attn_dist, coverage), dim=1)
-    cov_loss = torch.sum(loss) / target_length
-    return cov_loss
 
 # Define the training process
 def train(ptrgen, vocab, input_variable, lengths, target_variable, mask, max_target_len, 
@@ -612,17 +583,14 @@ def train(ptrgen, vocab, input_variable, lengths, target_variable, mask, max_tar
         
     # vocab being a global variable
     new_vocab = vocab.extend_vocab(oovs)
-    final_dists, attn_dists, coverages = ptrgen.forward(input_variable, lengths, target_variable, max_target_len, max_oov_len, new_vocab, mask)
+    final_dists = ptrgen.forward(input_variable, lengths, target_variable, max_target_len, max_oov_len, new_vocab, mask)
     
     for t in range(max_target_len):
         final_dist = final_dists[:, :, t]
-        attn_dist = attn_dists[:, :, t]
-        cov_dist = coverages[:, :, t]
         target = target_variable[:, t]
         
         mask_loss = maskNLLLoss(final_dist, target)
-        cov_loss = coverage_loss(attn_dist, cov_dist, target.size(0))
-        loss += (mask_loss + cov_loss)
+        loss += mask_loss
         # print_losses.append(mask_loss.item())
         # n_totals += nTotal
         print_losses.append(mask_loss.item())
@@ -652,7 +620,7 @@ def trainIters(ptrgen, voc, pairs, encoder, decoder, encoder_optimizer, decoder_
     print_loss = 0
 
     # Training loop
-    print("Training ...")
+    print("Training...")
     for iteration in range(n_iteration):
         training_batch = training_batches[iteration]
         # Extract fields from batch
@@ -666,8 +634,8 @@ def trainIters(ptrgen, voc, pairs, encoder, decoder, encoder_optimizer, decoder_
         # Print progress
         if (iteration + 1) % print_every == 0:
             print_loss_avg = print_loss / print_every
-            print("\rIteration: {}/{}, Average loss: {:.4f}".format(iteration + 1, n_iteration, print_loss_avg), end='', flush=True)
-            print_loss = 0       
+            print("\rIteration: {}/{}, Average loss: {:.4f}".format(iteration + 1, n_iteration, print_loss_avg), end="", flush=True)
+            print_loss = 0
     print()
             
 def test(ptrgen, vocab, article, summary):
@@ -686,7 +654,6 @@ def test(ptrgen, vocab, article, summary):
     lengths = lengths.to("cpu")
     
     new_vocab = vocab.extend_vocab(oovs)
-    # final_dists = ptrgen.generate(input_variable, lengths, max_target_len, max_oov_len, new_vocab)
     final_dists = ptrgen.generate_teacher_forcing(input_variable, lengths, target_variable, max_target_len, max_oov_len, new_vocab)
     
     summary = ""
@@ -703,7 +670,7 @@ def evaluate(ptrgen, vocab, pairs):
     for i in range(len(pairs)):
         article = pairs[i][0]
         summary = pairs[i][1]
-        
+
         gen_summary = test(ptrgen, vocab, article, summary)
         avg_rouge += Rouge().get_scores(gen_summary, summary)[0]['rouge-l']['p']
         
@@ -714,7 +681,7 @@ def evaluate(ptrgen, vocab, pairs):
 print("\nLoading dataset ...")
 dataset = load_dataset("cnn_dailymail", '1.0.0')
 
-pairs = LoadArticlesAndSummaries(dataset, 'train', 5000, 512, 256)
+pairs = LoadArticlesAndSummaries(dataset, 'train', 30000, 512, 256)
 # data_analysis(pairs)
 
 # Build Vocabulary with the trimmed dataset
@@ -745,7 +712,7 @@ ptrgen = PtrGen(hidden_size, vocab.num_words, decoder_n_layers, dropout)
 encoder = encoder.cuda()
 decoder = decoder.cuda()
 ptrgen = ptrgen.cuda()
-print('\nModels built and ready to go !')
+print('\nModels built and ready to go!')
 
 # Train the model
 clip = 50.0
@@ -777,20 +744,19 @@ for state in decoder_optimizer.state.values():
             state[k] = v.cuda()
 
 # Run training iterations
-print("\nStarting Training !")
+print("\nStarting Training!")
 trainIters(ptrgen, vocab, pairs, encoder, decoder, encoder_optimizer, decoder_optimizer, n_iteration, batch_size, print_every, clip)
-print("Training complete !")
-
-# Evaluate the model
-print("\nEvaluating ...")
+print("Training complete!")
 
 encoder.eval()
 decoder.eval()
 
+print("\nEvaluating ...")
 test_pairs = LoadArticlesAndSummaries(dataset, 'test', 1000, 256, 128)
 avg_rouge = evaluate(ptrgen, vocab, test_pairs)
 print("Average Rouge Score on test data : {:.4f}".format(avg_rouge))
 
+"""
 # Save the models
 encoder_path = "encoder.pth"
 torch.save(encoder.state_dict(), encoder_path)
@@ -801,3 +767,4 @@ torch.save(decoder.state_dict(), decoder_path)
 ptrgen_path = "ptrgen.pth"
 torch.save(ptrgen.state_dict(), ptrgen_path)
 print("Models saved!")
+"""
